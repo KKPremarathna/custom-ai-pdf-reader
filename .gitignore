@@ -1,0 +1,16 @@
+# Virtual environment
+.venv/
+
+# Jupyter checkpoints
+.ipynb_checkpoints/
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Local PDFs: usually large or copyrighted
+samples/*.pdf
+
+# System/editor files
+.DS_Store
+.vSCode/
