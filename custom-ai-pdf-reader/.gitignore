@@ -1,0 +1,14 @@
+# Python cache and test files
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Virtual environment
+.venv/
+
+# Jupyter temporary files
+.ipynb_checkpoints/
+
+# Local reader data and test PDFs
+data/
+*.pdf
