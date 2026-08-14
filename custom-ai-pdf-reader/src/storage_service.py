@@ -66,6 +66,7 @@ def load_document_data(document_id, pdf_path):
         "file_name": Path(pdf_path).name,
         "bookmarks": [],
         "notes": [],
+        "annotations": [],
         "last_page": 0
     }
 
@@ -82,18 +83,16 @@ def save_document_data(
     pdf_path,
     bookmarks,
     notes,
+    annotations,
     last_page
 ):
-    """
-    Save bookmarks, notes, and reading progress for one PDF.
-    """
-
     all_data = load_all_reader_data()
 
     all_data["documents"][document_id] = {
         "file_name": Path(pdf_path).name,
         "bookmarks": bookmarks,
         "notes": notes,
+        "annotations": annotations,
         "last_page": last_page
     }
 

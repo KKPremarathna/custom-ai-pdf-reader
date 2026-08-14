@@ -6,5 +6,8 @@ reader_state = {
     "search_index": 0,
 
     "bookmarks": [],
-    "notes": []
+
+    "notes": [],
+
+    "annotations": []
 }

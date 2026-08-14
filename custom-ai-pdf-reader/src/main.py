@@ -1,6 +1,7 @@
 import sys
 from datetime import datetime
 from pathlib import Path
+from PIL import ImageDraw
 
 from PySide6.QtCore import Qt, QEvent
 from PySide6.QtGui import (
@@ -61,6 +62,7 @@ class PDFReaderWindow(QMainWindow):
         self.create_reader_interface()
         self.create_bookmarks_dock()
         self.create_notes_dock()
+        self.create_annotations_dock()
         self.create_keyboard_shortcuts()
 
         self.statusBar().showMessage("Open a PDF to begin.")
@@ -97,12 +99,25 @@ class PDFReaderWindow(QMainWindow):
 
         self.search_status = QLabel("")
 
+        self.highlight_button = QPushButton("Highlight")
+
+        self.underline_button = QPushButton("Underline")
+
+        self.strikeout_button = QPushButton("Strike")
+
         toolbar.addSeparator()
         toolbar.addWidget(self.search_input)
         toolbar.addWidget(self.search_button)
         toolbar.addWidget(self.previous_result_button)
         toolbar.addWidget(self.next_result_button)
         toolbar.addWidget(self.search_status)
+        toolbar.addSeparator()
+
+        toolbar.addWidget(self.highlight_button)
+
+        toolbar.addWidget(self.underline_button)
+
+        toolbar.addWidget(self.strikeout_button)
 
         menu_bar = self.menuBar()
 
@@ -125,6 +140,18 @@ class PDFReaderWindow(QMainWindow):
 
         self.search_input.returnPressed.connect(
             self.run_search
+        )
+
+        self.highlight_button.clicked.connect(
+            lambda: self.add_annotation("highlight")
+        )
+
+        self.underline_button.clicked.connect(
+            lambda: self.add_annotation("underline")
+        )
+
+        self.strikeout_button.clicked.connect(
+            lambda: self.add_annotation("strikeout")
         )
 
         self.set_search_controls_enabled(False)
@@ -611,6 +638,174 @@ class PDFReaderWindow(QMainWindow):
 
         self.set_note_controls_enabled(False)
 
+    def create_annotations_dock(self):
+        self.annotations_dock = QDockWidget(
+            "Annotations",
+            self
+        )
+
+        self.annotations_dock.setAllowedAreas(
+            Qt.DockWidgetArea.LeftDockWidgetArea
+            | Qt.DockWidgetArea.RightDockWidgetArea
+        )
+
+        dock_content = QWidget()
+
+        dock_layout = QVBoxLayout()
+
+        instructions = QLabel(
+            "Search text, then choose Highlight, "
+            "Underline, or Strike."
+        )
+
+        instructions.setWordWrap(True)
+
+        self.annotation_list = QListWidget()
+
+        self.delete_annotation_button = QPushButton(
+            "Delete selected"
+        )
+
+        dock_layout.addWidget(instructions)
+
+        dock_layout.addWidget(self.annotation_list)
+
+        dock_layout.addWidget(
+            self.delete_annotation_button
+        )
+
+        dock_content.setLayout(dock_layout)
+
+        self.annotations_dock.setWidget(
+            dock_content
+        )
+
+        self.addDockWidget(
+            Qt.DockWidgetArea.RightDockWidgetArea,
+            self.annotations_dock
+        )
+
+        self.annotation_list.itemDoubleClicked.connect(
+            self.open_annotation
+        )
+
+        self.delete_annotation_button.clicked.connect(
+            self.delete_selected_annotation
+        )
+
+        self.view_menu.addAction(
+            self.annotations_dock.toggleViewAction()
+        )
+
+        self.set_annotation_controls_enabled(False)
+
+    def set_annotation_controls_enabled(self, enabled):
+        self.annotation_list.setEnabled(enabled)
+
+        self.delete_annotation_button.setEnabled(enabled)
+
+
+    def refresh_annotations(self):
+        self.annotation_list.clear()
+
+        for index, annotation in enumerate(
+            reader_state["annotations"]
+        ):
+            page_number = annotation["page_number"]
+
+            annotation_type = annotation["type"]
+
+            selected_text = annotation["text"]
+
+            created_at = annotation["created_at"]
+
+            preview = selected_text.replace("\n", " ").strip()
+
+            if len(preview) > 45:
+                preview = preview[:45] + "..."
+
+            item = QListWidgetItem(
+                f"{annotation_type.title()} — "
+                f"Page {page_number + 1}\n"
+                f"{preview}\n"
+                f"{created_at}"
+            )
+
+            item.setData(
+                Qt.ItemDataRole.UserRole,
+                index
+            )
+
+            self.annotation_list.addItem(item)
+
+
+    def open_annotation(self, item):
+        annotation_index = item.data(
+            Qt.ItemDataRole.UserRole
+        )
+
+        annotation = reader_state["annotations"][
+            annotation_index
+        ]
+
+        self.change_page(
+            annotation["page_number"]
+        )
+
+
+    def delete_selected_annotation(self):
+        selected_items = self.annotation_list.selectedItems()
+
+        if not selected_items:
+            QMessageBox.information(
+                self,
+                "No annotation selected",
+                "Select an annotation from the list first."
+            )
+
+            return
+
+        item = selected_items[0]
+
+        annotation_index = item.data(
+            Qt.ItemDataRole.UserRole
+        )
+
+        annotation = reader_state["annotations"][
+            annotation_index
+        ]
+
+        answer = QMessageBox.question(
+            self,
+            "Delete annotation",
+            (
+                f"Delete this {annotation['type']} "
+                f"annotation from page "
+                f"{annotation['page_number'] + 1}?"
+            ),
+            QMessageBox.StandardButton.Yes
+            | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+
+        reader_state["annotations"].pop(
+            annotation_index
+        )
+
+        self.save_current_reader_data()
+
+        self.refresh_annotations()
+
+        self.refresh_reader()
+
+        self.statusBar().showMessage(
+            "Annotation deleted.",
+            3000
+    )
+
     def set_note_controls_enabled(self, enabled):
         self.note_input.setEnabled(enabled)
         self.add_note_button.setEnabled(enabled)
@@ -795,6 +990,7 @@ class PDFReaderWindow(QMainWindow):
         reader_state["zoom_dpi"] = 120
         reader_state["search_results"] = []
         reader_state["search_index"] = 0
+        reader_state["annotations"] = []
 
         reader_state["bookmarks"] = saved_data.get(
             "bookmarks",
@@ -803,6 +999,10 @@ class PDFReaderWindow(QMainWindow):
 
         reader_state["notes"] = saved_data.get(
             "notes",
+            []
+        )
+        reader_state["annotations"] = saved_data.get(
+            "annotations",
             []
         )
 
@@ -820,6 +1020,8 @@ class PDFReaderWindow(QMainWindow):
 
         self.set_note_controls_enabled(True)
 
+        self.set_annotation_controls_enabled(True)
+
         self.set_search_controls_enabled(True)
 
         self.refresh_reader()
@@ -827,6 +1029,8 @@ class PDFReaderWindow(QMainWindow):
         self.refresh_bookmarks()
 
         self.refresh_notes()
+
+        self.refresh_annotations()
 
         self.statusBar().showMessage(
             f"Opened {self.pdf_path.name}"
@@ -841,6 +1045,7 @@ class PDFReaderWindow(QMainWindow):
             pdf_path=self.pdf_path,
             bookmarks=reader_state["bookmarks"],
             notes=reader_state["notes"],
+            annotations=reader_state["annotations"],
             last_page=reader_state["current_page"]
         )
 
@@ -853,6 +1058,9 @@ class PDFReaderWindow(QMainWindow):
         self.search_button.setEnabled(enabled)
         self.previous_result_button.setEnabled(enabled)
         self.next_result_button.setEnabled(enabled)
+        self.highlight_button.setEnabled(enabled)
+        self.underline_button.setEnabled(enabled)
+        self.strikeout_button.setEnabled(enabled)
 
     def run_search(self):
         if self.document is None:
@@ -938,6 +1146,64 @@ class PDFReaderWindow(QMainWindow):
 
         self.show_current_search_result()
 
+    def add_annotation(self, annotation_type):
+        if self.document is None:
+            return
+
+        results = reader_state["search_results"]
+
+        if not results:
+            QMessageBox.information(
+                self,
+                "Search required",
+                "Search for text and select a result first."
+            )
+
+            return
+
+        current_result = results[
+            reader_state["search_index"]
+        ]
+
+        search_text = self.search_input.text().strip()
+
+        rectangles = []
+
+        for rect in current_result["rectangles"]:
+            rectangles.append([
+                rect.x0,
+                rect.y0,
+                rect.x1,
+                rect.y1
+            ])
+
+        new_annotation = {
+            "page_number": current_result["page_number"],
+            "rectangles": rectangles,
+            "type": annotation_type,
+            "text": search_text,
+            "created_at": datetime.now().strftime(
+                "%Y-%m-%d %H:%M"
+            )
+        }
+
+        reader_state["annotations"].append(
+            new_annotation
+        )
+
+        self.save_current_reader_data()
+
+        self.refresh_annotations()
+
+        self.change_page(
+            current_result["page_number"]
+        )
+
+        self.statusBar().showMessage(
+            f"Saved {annotation_type} annotation.",
+            3000
+        )
+
     # =====================================================
     # RENDER PDF PAGE
     # =====================================================
@@ -950,7 +1216,7 @@ class PDFReaderWindow(QMainWindow):
 
         dpi = reader_state["zoom_dpi"]
 
-        highlights = None
+        search_highlights = None
 
         results = reader_state["search_results"]
 
@@ -960,14 +1226,16 @@ class PDFReaderWindow(QMainWindow):
             ]
 
             if current_result["page_number"] == current_page:
-                highlights = current_result["rectangles"]
+                search_highlights = current_result[
+                    "rectangles"
+                ]
 
         try:
             image = render_page(
                 document=self.document,
                 page_number=current_page,
                 dpi=dpi,
-                highlight_rectangles=highlights
+                highlight_rectangles=search_highlights
             )
 
         except Exception as error:
@@ -979,14 +1247,17 @@ class PDFReaderWindow(QMainWindow):
 
             return
 
+        self.draw_saved_annotations(
+            image,
+            current_page,
+            dpi
+        )
+
         qimage = self.pil_to_qimage(image)
 
         self.original_pixmap = QPixmap.fromImage(qimage)
 
         self.update_page_display()
-
-        self.scroll_area.horizontalScrollBar().setValue(0)
-        self.scroll_area.verticalScrollBar().setValue(0)
 
         total_pages = get_page_count(self.document)
 
@@ -1007,6 +1278,54 @@ class PDFReaderWindow(QMainWindow):
         self.next_button.setEnabled(
             current_page < total_pages - 1
         )
+
+    def draw_saved_annotations(
+            self,
+            image,
+            page_number,
+            dpi
+        ):
+            draw = ImageDraw.Draw(image, "RGBA")
+
+            scale = dpi / 72
+
+            for annotation in reader_state["annotations"]:
+                if annotation["page_number"] != page_number:
+                    continue
+
+                annotation_type = annotation["type"]
+
+                for rectangle in annotation["rectangles"]:
+                    x0, y0, x1, y1 = rectangle
+
+                    left = x0 * scale
+                    top = y0 * scale
+                    right = x1 * scale
+                    bottom = y1 * scale
+
+                    if annotation_type == "highlight":
+                        draw.rectangle(
+                            [left, top, right, bottom],
+                            fill=(255, 235, 0, 100)
+                        )
+
+                    elif annotation_type == "underline":
+                        line_y = bottom - 2
+
+                        draw.line(
+                            [left, line_y, right, line_y],
+                            fill=(0, 100, 255, 255),
+                            width=max(2, int(scale * 2))
+                        )
+
+                    elif annotation_type == "strikeout":
+                        line_y = (top + bottom) / 2
+
+                        draw.line(
+                            [left, line_y, right, line_y],
+                            fill=(220, 30, 30, 255),
+                            width=max(2, int(scale * 2))
+                        )
 
     def update_page_display(self):
         if self.original_pixmap is None:
