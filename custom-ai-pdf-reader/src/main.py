@@ -1,6 +1,7 @@
 import sys
 from datetime import datetime
 from pathlib import Path
+from src.night_mode_service import apply_night_mode
 
 import pymupdf
 from PIL import Image, ImageDraw
@@ -34,6 +35,7 @@ class PDFTab(QWidget):
         self.current_page = 0
         self.zoom_dpi = 120
         self.fit_width = True
+        self.night_mode = False
         self.search_results = []
         self.search_index = 0
         self.bookmarks = []
@@ -103,6 +105,9 @@ class PDFTab(QWidget):
             self.status_message.emit(f"Could not render page: {error}", 5000)
             return
         self.draw_saved_annotations(image)
+
+        if self.night_mode:
+            image = apply_night_mode(image)
         qimage = self.pil_to_qimage(image)
         self.original_pixmap = QPixmap.fromImage(qimage)
         self.update_page_display()
@@ -232,6 +237,21 @@ class PDFTab(QWidget):
         self.fit_width = False
         self.zoom_dpi = 120
         self.render_current_page()
+
+    def toggle_night_mode(self, enabled):
+        self.night_mode = enabled
+        self.render_current_page()
+
+        if enabled:
+            self.status_message.emit(
+                "Night mode enabled.",
+                2500,
+            )
+        else:
+            self.status_message.emit(
+                "Day mode enabled.",
+                2500,
+            )
 
     def run_search(self, query):
         if self.document is None:
@@ -576,6 +596,18 @@ class PDFReaderWindow(QMainWindow):
             lambda: self.tab_call("reset_zoom")
         )
         toolbar.addWidget(self.reset_zoom_button)
+
+        self.night_mode_button = QToolButton()
+        self.night_mode_button.setText("Night")
+        self.night_mode_button.setCheckable(True)
+        self.night_mode_button.setToolTip(
+            "Toggle night mode for the current PDF"
+        )
+        self.night_mode_button.toggled.connect(
+            self.toggle_night_mode
+        )
+
+        toolbar.addWidget(self.night_mode_button)
 
         toolbar.addSeparator()
 
@@ -956,6 +988,12 @@ class PDFReaderWindow(QMainWindow):
         if tab is not None:
             tab.set_mode(mode)
 
+    def toggle_night_mode(self, enabled):
+        tab = self.current_tab()
+
+        if tab is not None:
+            tab.toggle_night_mode(enabled)
+
     def sync_tool_buttons(self, tab):
         mapping = {
             "select": self.select_button,
@@ -973,6 +1011,7 @@ class PDFReaderWindow(QMainWindow):
             self.prev_button, self.next_button, self.page_input,
             self.zoom_out_button, self.zoom_in_button,
             self.fit_width_button, self.reset_zoom_button,
+            self.night_mode_button,
             self.select_button, self.highlight_button,
             self.underline_button, self.strikeout_button,
             self.eraser_button, self.image_button,
@@ -1057,6 +1096,9 @@ class PDFReaderWindow(QMainWindow):
         self.page_input.blockSignals(False)
         self.total_pages_label.setText(f"/ {tab.document.page_count}")
         self.sync_tool_buttons(tab)
+        self.night_mode_button.blockSignals(True)
+        self.night_mode_button.setChecked(tab.night_mode)
+        self.night_mode_button.blockSignals(False)
         percent = round(tab.zoom_dpi / 120 * 100)
         self.zoom_label.setText(
             "Fit" if tab.fit_width else f"{percent}%"
