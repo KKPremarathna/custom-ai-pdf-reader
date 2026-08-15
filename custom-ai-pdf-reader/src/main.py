@@ -10,7 +10,7 @@ from PySide6.QtWidgets import (
     QApplication, QButtonGroup, QDialog, QDialogButtonBox, QDockWidget,
     QFileDialog, QGridLayout, QHBoxLayout, QLabel, QLineEdit, QListWidget,
     QListWidgetItem, QMainWindow, QMessageBox, QPushButton, QScrollArea,
-    QSpinBox, QTabWidget, QTextEdit, QToolBar, QToolButton, QVBoxLayout, QWidget,
+    QSpinBox, QTabWidget, QTextEdit, QToolBar, QToolButton, QVBoxLayout, QWidget,QMenu,
 )
 
 from src.embedded_image_service import get_page_images, save_image_bytes
@@ -169,15 +169,31 @@ class PDFTab(QWidget):
         self.change_page(self.current_page + 1)
 
     def zoom_in(self):
-        if self.zoom_dpi < 240:
+        maximum_dpi = 300
+        zoom_step = 12
+
+        if self.zoom_dpi < maximum_dpi:
             self.fit_width = False
-            self.zoom_dpi += 24
+
+            self.zoom_dpi = min(
+                maximum_dpi,
+                self.zoom_dpi + zoom_step,
+            )
+
             self.render_current_page()
 
     def zoom_out(self):
-        if self.zoom_dpi > 72:
+        minimum_dpi = 24
+        zoom_step = 12
+
+        if self.zoom_dpi > minimum_dpi:
             self.fit_width = False
-            self.zoom_dpi -= 24
+
+            self.zoom_dpi = max(
+                minimum_dpi,
+                self.zoom_dpi - zoom_step,
+            )
+
             self.render_current_page()
 
     def enable_fit_width(self):
@@ -424,48 +440,146 @@ class PDFReaderWindow(QMainWindow):
         self.night_mode_button.setCheckable(True)
         self.night_mode_button.toggled.connect(self.toggle_night_mode)
         toolbar.addWidget(self.night_mode_button)
-        self.extract_images_button = QToolButton(text="Extract Images")
-        self.extract_images_button.clicked.connect(self.open_embedded_images_dialog)
-        toolbar.addWidget(self.extract_images_button)
         toolbar.addSeparator()
 
-        self.select_button = QToolButton(text="Select")
-        self.highlight_button = QToolButton(text="Highlight")
-        self.underline_button = QToolButton(text="Underline")
-        self.strikeout_button = QToolButton(text="Strike")
-        self.eraser_button = QToolButton(text="Eraser")
-        self.image_button = QToolButton(text="SnapShot")
+        toolbar.addSeparator()
+
+        self.select_button = QToolButton()
+        self.select_button.setText("Select")
+        self.select_button.setCheckable(True)
+        self.select_button.setChecked(True)
+
+        self.highlight_button = QToolButton()
+        self.highlight_button.setText("Highlight")
+        self.highlight_button.setCheckable(True)
+
+        self.underline_button = QToolButton()
+        self.underline_button.setText("Underline")
+        self.underline_button.setCheckable(True)
+
+        self.strikeout_button = QToolButton()
+        self.strikeout_button.setText("Strike")
+        self.strikeout_button.setCheckable(True)
+
+        self.eraser_button = QToolButton()
+        self.eraser_button.setText("Eraser")
+        self.eraser_button.setCheckable(True)
+
+        self.image_button = QToolButton()
+        self.image_button.setText("Snapshot")
+        self.image_button.setCheckable(True)
+
         self.tool_group = QButtonGroup(self)
         self.tool_group.setExclusive(True)
-        for name, button in (
-            ("select", self.select_button),
-            ("highlight", self.highlight_button),
-            ("underline", self.underline_button),
-            ("strikeout", self.strikeout_button),
-            ("eraser", self.eraser_button),
-            ("SnapShot", self.image_button),
+
+        for button in (
+            self.select_button,
+            self.highlight_button,
+            self.underline_button,
+            self.strikeout_button,
+            self.eraser_button,
+            self.image_button,
         ):
-            button.setCheckable(True)
-            button.clicked.connect(lambda checked=False, mode=name: self.set_tool_mode(mode))
             self.tool_group.addButton(button)
-            toolbar.addWidget(button)
-        self.select_button.setChecked(True)
+
+        self.select_button.clicked.connect(
+            lambda: self.set_tool_mode("select")
+        )
+        self.highlight_button.clicked.connect(
+            lambda: self.set_tool_mode("highlight")
+        )
+        self.underline_button.clicked.connect(
+            lambda: self.set_tool_mode("underline")
+        )
+        self.strikeout_button.clicked.connect(
+            lambda: self.set_tool_mode("strikeout")
+        )
+        self.eraser_button.clicked.connect(
+            lambda: self.set_tool_mode("eraser")
+        )
+        self.image_button.clicked.connect(
+            lambda: self.set_tool_mode("image")
+        )
+
+        self.tools_menu = QMenu(self)
+
+        self.tools_menu.addAction(
+            "Select text",
+            lambda: self.activate_tool("select")
+        )
+
+        self.tools_menu.addSeparator()
+
+        self.tools_menu.addAction(
+            "Highlight",
+            lambda: self.activate_tool("highlight")
+        )
+
+        self.tools_menu.addAction(
+            "Underline",
+            lambda: self.activate_tool("underline")
+        )
+
+        self.tools_menu.addAction(
+            "Strike through",
+            lambda: self.activate_tool("strikeout")
+        )
+
+        self.tools_menu.addSeparator()
+
+        self.tools_menu.addAction(
+            "Eraser",
+            lambda: self.activate_tool("eraser")
+        )
+
+        self.tools_button = QToolButton()
+        self.tools_button.setText("Tools")
+        self.tools_button.setMenu(self.tools_menu)
+        self.tools_button.setPopupMode(
+            QToolButton.ToolButtonPopupMode.InstantPopup
+        )
+        self.tools_button.setToolTip(
+            "Select, highlight, underline, strike, and erase tools"
+        )
+
+        toolbar.addWidget(self.tools_button)
+
+        self.images_menu = QMenu(self)
+
+        self.images_menu.addAction(
+            "Snapshot selected area",
+            lambda: self.activate_tool("image")
+        )
+
+        self.images_menu.addAction(
+            "Extract embedded images",
+            self.open_embedded_images_dialog,
+        )
+
+        self.images_button = QToolButton()
+        self.images_button.setText("Images")
+        self.images_button.setMenu(self.images_menu)
+        self.images_button.setPopupMode(
+            QToolButton.ToolButtonPopupMode.InstantPopup
+        )
+        self.images_button.setToolTip(
+            "Save a snapshot or extract original images"
+        )
+
+        toolbar.addWidget(self.images_button)
+
         toolbar.addSeparator()
 
-        self.search_input = QLineEdit()
-        self.search_input.setPlaceholderText("Search in PDF... (Ctrl+F)")
-        self.search_input.setFixedWidth(200)
-        self.search_input.returnPressed.connect(self.run_search)
-        toolbar.addWidget(self.search_input)
-        self.search_button = QToolButton(text="Search")
-        self.search_button.clicked.connect(self.run_search)
-        toolbar.addWidget(self.search_button)
-        self.prev_result_button = QToolButton(text="<")
-        self.prev_result_button.clicked.connect(lambda: self.tab_call("show_previous_result"))
-        toolbar.addWidget(self.prev_result_button)
-        self.next_result_button = QToolButton(text=">")
-        self.next_result_button.clicked.connect(lambda: self.tab_call("show_next_result"))
-        toolbar.addWidget(self.next_result_button)
+        self.search_toggle_button = QToolButton()
+        self.search_toggle_button.setText("Search")
+        self.search_toggle_button.setToolTip(
+            "Show or hide PDF search (Ctrl+F)"
+        )
+        self.search_toggle_button.clicked.connect(
+            self.toggle_search_bar
+        )
+
+        toolbar.addWidget(self.search_toggle_button)
 
         menu = self.menuBar().addMenu("File")
         open_action = QAction("Open PDF", self)
@@ -482,6 +596,47 @@ class PDFReaderWindow(QMainWindow):
         exit_action.triggered.connect(self.close)
         menu.addAction(exit_action)
         self.view_menu = self.menuBar().addMenu("View")
+        self.search_toolbar = QToolBar("Search")
+        self.search_toolbar.setMovable(False)
+        self.search_toolbar.setVisible(False)
+
+        self.addToolBar(Qt.ToolBarArea.TopToolBarArea, self.search_toolbar)
+
+        self.search_input = QLineEdit()
+        self.search_input.setPlaceholderText(
+            "Search in this PDF..."
+        )
+        self.search_input.setMinimumWidth(280)
+        self.search_input.returnPressed.connect(self.run_search)
+
+        self.search_button = QToolButton()
+        self.search_button.setText("Find")
+        self.search_button.clicked.connect(self.run_search)
+
+        self.prev_result_button = QToolButton()
+        self.prev_result_button.setText("Previous")
+        self.prev_result_button.clicked.connect(
+            lambda: self.tab_call("show_previous_result")
+        )
+
+        self.next_result_button = QToolButton()
+        self.next_result_button.setText("Next")
+        self.next_result_button.clicked.connect(
+            lambda: self.tab_call("show_next_result")
+        )
+
+        self.close_search_button = QToolButton()
+        self.close_search_button.setText("Close")
+        self.close_search_button.clicked.connect(
+            self.hide_search_bar
+        )
+
+        self.search_toolbar.addWidget(QLabel("Find:"))
+        self.search_toolbar.addWidget(self.search_input)
+        self.search_toolbar.addWidget(self.search_button)
+        self.search_toolbar.addWidget(self.prev_result_button)
+        self.search_toolbar.addWidget(self.next_result_button)
+        self.search_toolbar.addWidget(self.close_search_button)
 
     def create_docks(self):
         self.thumbnails_dock = QDockWidget("Thumbnails", self)
@@ -574,6 +729,22 @@ class PDFReaderWindow(QMainWindow):
             QTabBar::tab:selected { background: #14b8a6; color: #062621; font-weight: bold; }
             QDockWidget::title { background: #232b3a; padding: 8px; }
             QStatusBar { background: #232b3a; color: #9aa4b5; }
+            QMenu {
+        background: #232b3a;
+        border: 1px solid #3a4763;
+        border-radius: 8px;
+        padding: 6px;
+    }
+
+    QMenu::item {
+        padding: 8px 28px 8px 12px;
+        border-radius: 5px;
+    }
+
+    QMenu::item:selected {
+        background: #14b8a6;
+        color: #062621;
+    }
         """)
 
     def current_tab(self):
@@ -589,15 +760,63 @@ class PDFReaderWindow(QMainWindow):
         if tab is not None:
             tab.set_mode(mode)
 
+    def activate_tool(self, mode):
+        button_map = {
+            "select": self.select_button,
+            "highlight": self.highlight_button,
+            "underline": self.underline_button,
+            "strikeout": self.strikeout_button,
+            "eraser": self.eraser_button,
+            "image": self.image_button,
+        }
+
+        button = button_map.get(mode)
+
+        if button is not None:
+            button.setChecked(True)
+
+        self.set_tool_mode(mode)
+
+        tool_names = {
+            "select": "Select",
+            "highlight": "Highlight",
+            "underline": "Underline",
+            "strikeout": "Strike",
+            "eraser": "Eraser",
+            "image": "Snapshot",
+        }
+
+        self.tools_button.setText(
+            tool_names.get(mode, "Tools")
+        )
+
+
+    def toggle_search_bar(self):
+        is_visible = not self.search_toolbar.isVisible()
+
+        self.search_toolbar.setVisible(is_visible)
+
+        if is_visible:
+            self.search_input.setFocus()
+            self.search_input.selectAll()
+
+
+    def hide_search_bar(self):
+        self.search_toolbar.setVisible(False)
+
     def toggle_night_mode(self, enabled):
         tab = self.current_tab()
         if tab is not None:
             tab.toggle_night_mode(enabled)
 
     def focus_search(self):
-        if self.current_tab() is not None:
-            self.search_input.setFocus()
-            self.search_input.selectAll()
+        if self.current_tab() is None:
+            return
+
+        self.search_toolbar.setVisible(True)
+
+        self.search_input.setFocus()
+        self.search_input.selectAll()
 
     def go_to_page(self):
         tab = self.current_tab()
@@ -616,10 +835,14 @@ class PDFReaderWindow(QMainWindow):
         widgets = [
             self.prev_button, self.next_button, self.page_input, self.zoom_out_button,
             self.zoom_in_button, self.fit_width_button, self.reset_zoom_button,
-            self.night_mode_button, self.extract_images_button, self.select_button,
-            self.highlight_button, self.underline_button, self.strikeout_button,
-            self.eraser_button, self.image_button, self.search_input, self.search_button,
-            self.prev_result_button, self.next_result_button, self.thumbnails_list,
+            self.night_mode_button,  self.tools_button,
+            self.images_button,
+            self.search_toggle_button,
+            self.search_input,
+            self.search_button,
+            self.prev_result_button,
+            self.next_result_button,
+            self.close_search_button,self.thumbnails_list,
             self.bookmark_label_input, self.add_bookmark_button, self.bookmark_list,
             self.delete_bookmark_button, self.note_input, self.add_note_button,
             self.note_list, self.delete_note_button,
