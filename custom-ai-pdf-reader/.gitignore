@@ -1,14 +1,29 @@
-# Python cache and test files
+cat > .gitignore <<'EOF'
+.venv/
+venv/
 __pycache__/
 *.py[cod]
-.pytest_cache/
+*.pyo
+*.pyd
 
-# Virtual environment
-.venv/
+.env
+.env.*
 
-# Jupyter temporary files
-.ipynb_checkpoints/
-
-# Local reader data and test PDFs
-data/
 *.pdf
+*.png
+*.jpg
+*.jpeg
+
+build/
+dist/
+*.spec
+
+data/
+storage/
+exports/
+output/
+
+.idea/
+.vscode/
+.DS_Store
+EOF

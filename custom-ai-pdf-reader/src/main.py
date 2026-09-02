@@ -13,6 +13,24 @@ from PySide6.QtWidgets import (
     QSpinBox, QTabWidget, QTextEdit, QToolBar, QToolButton, QVBoxLayout, QWidget,QMenu,
 )
 
+from PySide6.QtCore import (
+    Qt,
+    QRectF,
+    QSize,
+    Signal,
+    QThread,
+)
+
+from PySide6.QtWidgets import (
+    QComboBox,
+    QProgressBar,
+)
+from src.ollama_service import (
+    OllamaError,
+    get_available_models,
+    summarize_document,
+    summarize_text,
+)
 from src.embedded_image_service import get_page_images, save_image_bytes
 from src.night_mode_service import apply_night_mode
 from src.pdf_page_view import PDFPageView
@@ -369,6 +387,89 @@ class PDFTab(QWidget):
         QGuiApplication.clipboard().setText(self.selected_text)
         self.status_message.emit(f"Copied: {self.selected_text[:80]}", 3000)
 
+    def get_current_page_text(self):
+        if self.document is None:
+            return ""
+
+        page = self.document[self.current_page]
+
+        return page.get_text(
+            "text",
+            sort=True,
+        ).strip()
+
+
+    def get_document_text(self):
+        if self.document is None:
+            return ""
+
+        page_texts = []
+
+        for page_number in range(self.document.page_count):
+            page = self.document[page_number]
+
+            text = page.get_text(
+                "text",
+                sort=True,
+            ).strip()
+
+            if text:
+                page_texts.append(
+                    f"\n\n--- PAGE {page_number + 1} ---\n{text}"
+                )
+
+        return "".join(page_texts).strip()
+
+class SummaryWorker(QThread):
+    finished_summary = Signal(str)
+    failed = Signal(str)
+    progress = Signal(str)
+
+    def __init__(
+        self,
+        model,
+        text,
+        whole_document=False,
+        parent=None,
+    ):
+        super().__init__(parent)
+
+        self.model = model
+        self.text = text
+        self.whole_document = whole_document
+
+    def run(self):
+        try:
+            if self.whole_document:
+                def update_progress(current, total):
+                    self.progress.emit(
+                        f"Summarizing section {current} of {total}..."
+                    )
+
+                summary = summarize_document(
+                    model=self.model,
+                    text=self.text,
+                    progress_callback=update_progress,
+                )
+            else:
+                self.progress.emit("Generating summary...")
+
+                summary = summarize_text(
+                    model=self.model,
+                    text=self.text,
+                )
+
+        except OllamaError as error:
+            self.failed.emit(str(error))
+            return
+
+        except Exception as error:
+            self.failed.emit(
+                f"Unexpected AI error: {error}"
+            )
+            return
+
+        self.finished_summary.emit(summary)
 
 class PDFReaderWindow(QMainWindow):
     def __init__(self):
@@ -687,17 +788,81 @@ class PDFReaderWindow(QMainWindow):
         for widget in (self.note_input, self.add_note_button, self.note_list, self.delete_note_button):
             notes_layout.addWidget(widget)
         self.tools_tabs.addTab(notes_widget, "Notes")
-        ai_label = QLabel("AI features are coming soon.")
-        ai_label.setWordWrap(True)
         ai_widget = QWidget()
         ai_layout = QVBoxLayout(ai_widget)
-        ai_layout.addWidget(ai_label)
+
+        ai_info = QLabel(
+            "Summarize the current page, selected text, "
+            "or the whole PDF using a local Ollama model."
+        )
+        ai_info.setWordWrap(True)
+
+        self.ai_model_combo = QComboBox()
+
+        self.ai_scope_combo = QComboBox()
+        self.ai_scope_combo.addItems([
+            "Current page",
+            "Selected text",
+            "Whole PDF",
+        ])
+
+        self.refresh_models_button = QPushButton(
+            "Refresh models"
+        )
+
+        self.summarize_button = QPushButton(
+            "Summarize"
+        )
+
+        self.ai_status_label = QLabel("")
+
+        self.ai_output = QTextEdit()
+        self.ai_output.setReadOnly(True)
+        self.ai_output.setPlaceholderText(
+            "Your AI summary will appear here..."
+        )
+
+        self.copy_ai_button = QPushButton(
+            "Copy summary"
+        )
+
+        self.save_ai_note_button = QPushButton(
+            "Save summary as note"
+        )
+
+        ai_layout.addWidget(ai_info)
+        ai_layout.addWidget(QLabel("Model:"))
+        ai_layout.addWidget(self.ai_model_combo)
+        ai_layout.addWidget(QLabel("Scope:"))
+        ai_layout.addWidget(self.ai_scope_combo)
+        ai_layout.addWidget(self.refresh_models_button)
+        ai_layout.addWidget(self.summarize_button)
+        ai_layout.addWidget(self.ai_status_label)
+        ai_layout.addWidget(self.ai_output)
+        ai_layout.addWidget(self.copy_ai_button)
+        ai_layout.addWidget(self.save_ai_note_button)
+
         self.tools_tabs.addTab(ai_widget, "AI Hub")
         self.tools_dock.setWidget(self.tools_tabs)
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.tools_dock)
         self.add_note_button.clicked.connect(self.add_note)
         self.delete_note_button.clicked.connect(self.delete_selected_note)
         self.note_list.itemDoubleClicked.connect(self.open_note)
+        self.refresh_models_button.clicked.connect(
+            self.refresh_ollama_models
+        )
+
+        self.summarize_button.clicked.connect(
+            self.start_summary
+        )
+
+        self.copy_ai_button.clicked.connect(
+            self.copy_ai_summary
+        )
+
+        self.save_ai_note_button.clicked.connect(
+            self.save_ai_summary_as_note
+        )
         self.view_menu.addAction(self.thumbnails_dock.toggleViewAction())
         self.view_menu.addAction(self.bookmarks_dock.toggleViewAction())
         self.view_menu.addAction(self.tools_dock.toggleViewAction())
@@ -867,6 +1032,7 @@ class PDFReaderWindow(QMainWindow):
         index = self.tabs.addTab(tab, tab.pdf_path.name)
         self.tabs.setCurrentIndex(index)
         self.set_tools_enabled(True)
+        self.refresh_ollama_models()
 
     def close_tab(self, index):
         tab = self.tabs.widget(index)
@@ -999,54 +1165,275 @@ class PDFReaderWindow(QMainWindow):
         save_all_button = button_box.addButton("Save all", QDialogButtonBox.ButtonRole.ActionRole)
         close_button = button_box.addButton(QDialogButtonBox.StandardButton.Close)
         layout.addWidget(button_box)
-
         def save_selected():
             image_info = selected["image"]
+
             if image_info is None:
-                QMessageBox.information(dialog, "No image selected", "Click one image preview first.")
+                QMessageBox.information(
+                    dialog,
+                    "No image selected",
+                    "Click one image preview first.",
+                )
                 return
-            default_name = f"{tab.pdf_path.stem}_page{tab.current_page + 1}_image_{image_info['xref']}.{image_info['extension']}"
-            filename, _ = QFileDialog.getSaveFileName(dialog, "Save original embedded image", str(Path.home() / default_name), "All files (*.*)")
+
+            default_name = (
+                f"{tab.pdf_path.stem}_"
+                f"page{tab.current_page + 1}_"
+                f"image_{image_info['xref']}."
+                f"{image_info['extension']}"
+            )
+
+            filename, _ = QFileDialog.getSaveFileName(
+                dialog,
+                "Save original embedded image",
+                str(Path.home() / default_name),
+                "All files (*.*)",
+            )
+
             if not filename:
                 return
+
             try:
                 save_image_bytes(image_info, filename)
+
             except Exception as error:
-                QMessageBox.critical(dialog, "Could not save image", str(error))
+                QMessageBox.critical(
+                    dialog,
+                    "Could not save image",
+                    str(error),
+                )
                 return
-            QMessageBox.information(dialog, "Image saved", f"Saved original image as:\n{Path(filename).name}")
+
+            QMessageBox.information(
+                dialog,
+                "Image saved",
+                f"Saved original image as:\n{Path(filename).name}",
+            )
 
         def save_all():
-            folder = QFileDialog.getExistingDirectory(dialog, "Choose folder for extracted images", str(Path.home()))
+            folder = QFileDialog.getExistingDirectory(
+                dialog,
+                "Choose folder for extracted images",
+                str(Path.home()),
+            )
+
             if not folder:
                 return
+
             try:
                 for index, image_info in enumerate(images, start=1):
-                    filename = f"{tab.pdf_path.stem}_page{tab.current_page + 1}_image_{index}_xref{image_info['xref']}.{image_info['extension']}"
-                    save_image_bytes(image_info, Path(folder) / filename)
+                    filename = (
+                        f"{tab.pdf_path.stem}_"
+                        f"page{tab.current_page + 1}_"
+                        f"image_{index}_xref{image_info['xref']}."
+                        f"{image_info['extension']}"
+                    )
+
+                    save_image_bytes(
+                        image_info,
+                        Path(folder) / filename,
+                    )
+
             except Exception as error:
-                QMessageBox.critical(dialog, "Could not save images", str(error))
+                QMessageBox.critical(
+                    dialog,
+                    "Could not save images",
+                    str(error),
+                )
                 return
-            QMessageBox.information(dialog, "Images saved", f"Saved {len(images)} image(s) to:\n{folder}")
+
+            QMessageBox.information(
+                dialog,
+                "Images saved",
+                f"Saved {len(images)} image(s) to:\n{folder}",
+            )
 
         save_selected_button.clicked.connect(save_selected)
         save_all_button.clicked.connect(save_all)
         close_button.clicked.connect(dialog.close)
+
         dialog.exec()
 
+        
     def refresh_metadata(self):
         tab = self.current_tab()
-        if tab is None:
-            self.metadata_label.setText("Open a PDF to see its details.")
+
+        if tab is None or tab.document is None:
+            self.metadata_label.setText(
+                "Open a PDF to see its details."
+            )
             return
-        meta = tab.document.metadata or {}
+
+        metadata = tab.document.metadata or {}
+
         self.metadata_label.setText(
-            f"<b>Title:</b> {meta.get('title') or '-'}<br><br>"
-            f"<b>Author:</b> {meta.get('author') or '-'}<br><br>"
-            f"<b>Subject:</b> {meta.get('subject') or '-'}<br><br>"
-            f"<b>Pages:</b> {tab.document.page_count}<br><br>"
-            f"<b>File:</b> {tab.pdf_path.name}"
+            f"<b>Title:</b> "
+            f"{metadata.get('title') or '-'}<br><br>"
+
+            f"<b>Author:</b> "
+            f"{metadata.get('author') or '-'}<br><br>"
+
+            f"<b>Subject:</b> "
+            f"{metadata.get('subject') or '-'}<br><br>"
+
+            f"<b>Creator:</b> "
+            f"{metadata.get('creator') or '-'}<br><br>"
+
+            f"<b>Pages:</b> "
+            f"{tab.document.page_count}<br><br>"
+
+            f"<b>File:</b> "
+            f"{tab.pdf_path.name}"
         )
+        
+
+    def refresh_ollama_models(self):
+        self.ai_model_combo.clear()
+
+        try:
+            models = get_available_models()
+
+        except OllamaError as error:
+            self.ai_status_label.setText(str(error))
+            return
+
+        if not models:
+            self.ai_status_label.setText(
+                "No Ollama models found. "
+                "Run: ollama pull qwen2.5:3b"
+            )
+            return
+
+        self.ai_model_combo.addItems(models)
+
+        self.ai_status_label.setText(
+            f"Found {len(models)} local model(s)."
+        )
+
+    def start_summary(self):
+        tab = self.current_tab()
+
+        if tab is None:
+            return
+
+        model = self.ai_model_combo.currentText()
+
+        if not model:
+            self.ai_status_label.setText(
+                "Choose a model first, then click Refresh models."
+            )
+            return
+
+        scope = self.ai_scope_combo.currentText()
+
+        if scope == "Selected text":
+            text = tab.selected_text
+            whole_document = False
+
+            if not text:
+                self.ai_status_label.setText(
+                    "Select text on the PDF first."
+                )
+                return
+
+        elif scope == "Whole PDF":
+            text = tab.get_document_text()
+            whole_document = True
+
+        else:
+            text = tab.get_current_page_text()
+            whole_document = False
+
+        if not text:
+            self.ai_status_label.setText(
+                "No selectable text was found."
+            )
+            return
+
+        self.summarize_button.setEnabled(False)
+        self.refresh_models_button.setEnabled(False)
+        self.ai_output.clear()
+        self.ai_status_label.setText(
+            "Starting local model..."
+        )
+
+        self.summary_worker = SummaryWorker(
+            model=model,
+            text=text,
+            whole_document=whole_document,
+            parent=self,
+        )
+
+        self.summary_worker.progress.connect(
+            self.ai_status_label.setText
+        )
+
+        self.summary_worker.finished_summary.connect(
+            self.finish_summary
+        )
+
+        self.summary_worker.failed.connect(
+            self.summary_failed
+        )
+
+        self.summary_worker.start()
+
+    def finish_summary(self, summary):
+        self.ai_output.setPlainText(summary)
+        self.ai_status_label.setText("Summary complete.")
+        self.summarize_button.setEnabled(True)
+        self.refresh_models_button.setEnabled(True)
+
+    def summary_failed(self, message):
+        self.ai_status_label.setText(message)
+        self.summarize_button.setEnabled(True)
+        self.refresh_models_button.setEnabled(True)
+
+    def copy_ai_summary(self):
+        summary = self.ai_output.toPlainText().strip()
+
+        if not summary:
+            self.ai_status_label.setText(
+                "There is no summary to copy."
+            )
+            return
+
+        QGuiApplication.clipboard().setText(summary)
+
+        self.ai_status_label.setText(
+            "Summary copied to clipboard."
+        )
+
+    def save_ai_summary_as_note(self):
+        tab = self.current_tab()
+
+        if tab is None:
+            return
+
+        summary = self.ai_output.toPlainText().strip()
+
+        if not summary:
+            self.ai_status_label.setText(
+                "Generate a summary first."
+            )
+            return
+
+        tab.notes.append({
+            "page_number": tab.current_page,
+            "text": f"AI Summary:\n\n{summary}",
+            "created_at": datetime.now().strftime(
+                "%Y-%m-%d %H:%M"
+            ),
+        })
+
+        tab.save_data()
+        self.refresh_notes()
+
+        self.ai_status_label.setText(
+            "Summary saved as a note."
+        )        
+
+    
 
     def refresh_bookmarks(self):
         self.bookmark_list.clear()
