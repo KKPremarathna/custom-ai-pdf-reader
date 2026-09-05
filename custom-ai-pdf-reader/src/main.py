@@ -18,7 +18,6 @@ from PySide6.QtCore import (
     QRectF,
     QSize,
     Signal,
-    QThread,
 )
 
 from PySide6.QtWidgets import (
@@ -31,6 +30,7 @@ from src.ollama_service import (
     summarize_document,
     summarize_text,
 )
+from src.ai_worker import SummaryWorker
 from src.embedded_image_service import get_page_images, save_image_bytes
 from src.night_mode_service import apply_night_mode
 from src.pdf_page_view import PDFPageView
@@ -420,56 +420,6 @@ class PDFTab(QWidget):
 
         return "".join(page_texts).strip()
 
-class SummaryWorker(QThread):
-    finished_summary = Signal(str)
-    failed = Signal(str)
-    progress = Signal(str)
-
-    def __init__(
-        self,
-        model,
-        text,
-        whole_document=False,
-        parent=None,
-    ):
-        super().__init__(parent)
-
-        self.model = model
-        self.text = text
-        self.whole_document = whole_document
-
-    def run(self):
-        try:
-            if self.whole_document:
-                def update_progress(current, total):
-                    self.progress.emit(
-                        f"Summarizing section {current} of {total}..."
-                    )
-
-                summary = summarize_document(
-                    model=self.model,
-                    text=self.text,
-                    progress_callback=update_progress,
-                )
-            else:
-                self.progress.emit("Generating summary...")
-
-                summary = summarize_text(
-                    model=self.model,
-                    text=self.text,
-                )
-
-        except OllamaError as error:
-            self.failed.emit(str(error))
-            return
-
-        except Exception as error:
-            self.failed.emit(
-                f"Unexpected AI error: {error}"
-            )
-            return
-
-        self.finished_summary.emit(summary)
 
 class PDFReaderWindow(QMainWindow):
     def __init__(self):
