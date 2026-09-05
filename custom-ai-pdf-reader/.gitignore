@@ -1,29 +1,27 @@
-cat > .gitignore <<'EOF'
-.venv/
-venv/
+# Python cache
 __pycache__/
 *.py[cod]
-*.pyo
-*.pyd
 
-.env
-.env.*
+# Virtual environments
+.venv/
+venv/
 
-*.pdf
-*.png
-*.jpg
-*.jpeg
-
+# Build output
 build/
 dist/
 *.spec
 
-data/
-storage/
-exports/
-output/
+# Test cache
+.pytest_cache/
 
-.idea/
-.vscode/
+# Jupyter files
+.ipynb_checkpoints/
+
+# User secrets and future API keys
+.env
+*.env
+secrets.json
+credentials.json
+
+# OS files
 .DS_Store
-EOF
